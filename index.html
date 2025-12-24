@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BMN BC Lhoks - Cloud Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/pizzip@3.1.4/dist/pizzip.js"></script>
+    <script src="https://unpkg.com/docxtemplater@3.37.2/build/docxtemplater.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://unpkg.com/docx-preview@0.1.15/dist/docx-preview.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bc-navy: #002347;
+            --bc-gold: #c5a059;
+            --bc-gold-light: #e6d5b8;
+        }
+        .bg-bc-navy { background-color: var(--bc-navy); }
+        .bg-bc-gold { background-color: var(--bc-gold); }
+        .text-bc-gold { color: var(--bc-gold); }
+        .border-bc-gold { border-color: var(--bc-gold); }
+
+        .sidebar { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); width: 280px; min-width: 280px; }
+        .sidebar.collapsed { width: 0; min-width: 0; margin-left: -280px; }
+        .main-content { flex-grow: 1; min-width: 0; transition: all 0.3s ease; }
+        
+        #previewContainer {
+            background-color: #f1f5f9;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            overflow-y: auto;
+            height: 100%;
+        }
+        .docx-wrapper { padding: 0 !important; background-color: transparent !important; }
+        .docx { 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08) !important;
+            margin-bottom: 40px !important;
+            background: white !important;
+        }
+
+        .submenu, .template-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .submenu.expanded, .template-content.expanded {
+            max-height: 800px;
+        }
+        .chevron-icon { transition: transform 0.3s ease; }
+        .chevron-icon.rotate { transform: rotate(180deg); }
+
+        #loadingOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 35, 71, 0.85);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            flex-direction: column;
+        }
+
+        #toast {
+            visibility: hidden;
+            min-width: 280px;
+            background-color: #10b981;
+            color: #fff;
+            text-align: center;
+            border-radius: 12px;
+            padding: 16px;
+            position: fixed;
+            z-index: 101;
+            right: 30px;
+            bottom: 30px;
+            font-size: 14px;
+            font-weight: 800;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: 0.5s;
+        }
+        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+
+        @keyframes fadein { from { bottom: 0; opacity: 0; } to { bottom: 30px; opacity: 1; } }
+        @keyframes fadeout { from { bottom: 30px; opacity: 1; } to { bottom: 0; opacity: 0; } }
+
+        .cloud-badge {
+            font-size: 9px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            background: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(4px);
+        }
+        .modal.active { display: flex; }
+    </style>
+</head>
+<body class="bg-slate-50 flex h-screen overflow-hidden text-slate-800">
+
+    <div id="toast">
+        <i class="fas fa-check-circle text-xl"></i>
+        <span id="toastMessage">Pesan</span>
+    </div>
+
+    <div id="loadingOverlay">
+        <i class="fas fa-anchor fa-spin text-5xl text-bc-gold mb-4"></i>
+        <p class="font-bold tracking-widest uppercase text-sm" id="loaderText">Memproses...</p>
+    </div>
+
+    <!-- Modal Lihat Format Cloud -->
+    <div id="cloudModal" class="modal">
+        <div class="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl m-4">
+            <div class="bg-bc-navy p-6 text-white flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <i class="fas fa-cloud text-bc-gold"></i>
+                    <h3 class="font-black uppercase tracking-widest text-sm">Pustaka Cloud</h3>
+                </div>
+                <button onclick="closeCloudModal()" class="text-white/50 hover:text-white"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <div class="p-6 max-h-[60vh] overflow-y-auto" id="cloudListContent"></div>
+            <div class="p-6 border-t bg-slate-50 flex justify-end">
+                <button onclick="closeCloudModal()" class="bg-slate-200 text-slate-700 px-6 py-2 rounded-xl text-xs font-black uppercase">Tutup</button>
+            </div>
+        </div>
+    </div>
+
+    <aside id="sidebar" class="sidebar bg-bc-navy text-white flex flex-col shadow-2xl z-20 relative">
+        <div class="p-6 border-b border-slate-700">
+            <h1 class="text-lg font-black flex items-center gap-3">
+                <div class="h-8 w-8 bg-bc-gold rounded flex items-center justify-center text-bc-navy">
+                    <i class="fas fa-shield-halved"></i>
+                </div>
+                <span class="tracking-tight uppercase">BMN BC Lhoks</span>
+            </h1>
+        </div>
+        
+        <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
+            <button onclick="switchPage('upload')" id="nav-upload" class="nav-item w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-800 transition text-sm font-medium">
+                <i class="fas fa-house-chimney w-5"></i> <span>Dashboard Utama</span>
+            </button>
+
+            <div class="pt-4 pb-2">
+                <div class="flex items-center gap-2 px-3 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Administrasi</div>
+            </div>
+
+            <div class="space-y-1">
+                <button onclick="toggleSubmenu('sip-submenu')" class="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-800 transition text-sm font-bold">
+                    <div class="flex items-center gap-3"><i class="fas fa-file-signature w-5 text-bc-gold"></i> Modul SIP</div>
+                    <i id="chevron-sip-submenu" class="fas fa-chevron-down text-[10px] opacity-50 chevron-icon"></i>
+                </button>
+                <div id="sip-submenu" class="submenu space-y-1">
+                    <button onclick="switchPage('preview-permohonan', 'sip-submenu')" class="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-800 transition text-xs pl-12">Permohonan SIP</button>
+                    <button onclick="switchPage('preview-pernyataan', 'sip-submenu')" class="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-800 transition text-xs pl-12">Surat Pernyataan</button>
+                    <button onclick="switchPage('preview-penunjukan', 'sip-submenu')" class="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-800 transition text-xs pl-12">KEP Penunjukan</button>
+                    <button onclick="switchPage('preview-pencabutan', 'sip-submenu')" class="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-800 transition text-xs pl-12">KEP Pencabutan</button>
+                </div>
+            </div>
+
+            <div class="space-y-1">
+                <button onclick="toggleSubmenu('mutasi-submenu')" class="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-800 transition text-sm font-bold">
+                    <div class="flex items-center gap-3"><i class="fas fa-people-arrows w-5 text-bc-gold"></i> BMN Mutasi</div>
+                    <i id="chevron-mutasi-submenu" class="fas fa-chevron-down text-[10px] opacity-50 chevron-icon"></i>
+                </button>
+                <div id="mutasi-submenu" class="submenu space-y-1">
+                    <button onclick="switchPage('preview-bast', 'mutasi-submenu')" class="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-800 transition text-xs pl-12">BAST BMN</button>
+                    <button onclick="switchPage('preview-tidak-kuasa', 'mutasi-submenu')" class="w-full flex items-center gap-3 p-2.5 rounded-lg hover:bg-slate-800 transition text-xs pl-12">Surat Keterangan</button>
+                </div>
+            </div>
+        </nav>
+
+        <div class="p-4 border-t border-slate-700 flex flex-col items-center">
+            <div id="authStatus" class="text-[9px] font-bold text-slate-500 mb-2 uppercase flex items-center gap-2">
+                <span class="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse"></span> Offline
+            </div>
+            <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">KPPBC TMP C LHOKSEUMAWE</p>
+        </div>
+    </aside>
+
+    <div class="main-content flex flex-col h-full overflow-hidden">
+        <header class="bg-white border-b h-16 flex items-center justify-between px-6 shrink-0 z-10 shadow-sm">
+            <div class="flex items-center gap-4">
+                <button onclick="toggleSidebar()" class="p-2 hover:bg-slate-100 rounded-lg text-bc-navy"><i class="fas fa-bars-staggered text-xl"></i></button>
+                <h2 id="headerTitle" class="font-black text-bc-navy uppercase text-sm tracking-widest">Dashboard Utama</h2>
+            </div>
+            <div id="dataBadge" class="hidden bg-bc-navy text-white px-4 py-1.5 rounded-lg text-[10px] font-black border-b-2 border-bc-gold">
+                <i class="fas fa-database mr-2 text-bc-gold"></i><span id="badgeCount">0</span> DATA DIPROSES
+            </div>
+        </header>
+
+        <main class="flex-1 overflow-hidden relative">
+            <section id="page-upload" class="p-8 max-w-7xl mx-auto space-y-8 h-full overflow-y-auto pb-20">
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                    <div class="xl:col-span-1 space-y-6">
+                        <div class="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+                            <h3 class="text-xl font-black text-bc-navy mb-4 flex items-center gap-3"><i class="fas fa-file-excel text-bc-gold"></i> DATA SUMBER</h3>
+                            <div class="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center hover:border-bc-gold bg-slate-50 cursor-pointer transition-all relative">
+                                <input type="file" id="excelInput" accept=".xlsx" class="absolute inset-0 opacity-0 cursor-pointer" />
+                                <i class="fas fa-cloud-arrow-up text-3xl text-bc-gold mb-3"></i>
+                                <p id="excelStatus" class="text-xs font-bold text-slate-600">Klik untuk unggah Excel</p>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-900 p-6 rounded-3xl text-white shadow-xl">
+                            <h4 class="text-xs font-black text-bc-gold mb-4 uppercase tracking-[0.2em]">Pustaka Template Cloud</h4>
+                            <div class="grid grid-cols-1 gap-2">
+                                <button onclick="saveTemplatesToCloud()" id="btnSaveCloud" class="w-full bg-bc-gold text-bc-navy py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2">
+                                    <i class="fas fa-cloud-arrow-up"></i> Simpan ke Cloud
+                                </button>
+                                <button onclick="openCloudModal()" class="w-full bg-white/10 hover:bg-white/20 border border-white/20 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2">
+                                    <i class="fas fa-list-check"></i> Daftar Cloud
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="xl:col-span-2 space-y-6">
+                        <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                            <button onclick="toggleTemplateCollapse('sip-tpl-content')" class="w-full p-6 flex items-center justify-between bg-slate-50/50 hover:bg-slate-50 transition-all">
+                                <h3 class="text-sm font-black text-bc-navy uppercase tracking-widest flex items-center gap-3">
+                                    <i class="fas fa-file-invoice text-bc-gold"></i> Template Administrasi SIP
+                                </h3>
+                                <i id="chevron-sip-tpl-content" class="fas fa-chevron-down text-xs opacity-30 chevron-icon rotate"></i>
+                            </button>
+                            <div id="sip-tpl-content" class="template-content expanded">
+                                <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-4 border-t">
+                                    <div class="p-4 bg-slate-50 rounded-2xl border">
+                                        <div class="flex justify-between items-center mb-2">
+                                            <label class="text-[10px] font-black text-slate-500 uppercase">Permohonan SIP</label>
+                                            <span id="badge-permohonan" class="cloud-badge bg-slate-200 text-slate-500">Checking...</span>
+                                        </div>
+                                        <input type="file" class="doc-input text-[10px] w-full" data-key="permohonan" accept=".docx" />
+                                    </div>
+                                    <div class="p-4 bg-slate-50 rounded-2xl border">
+                                        <div class="flex justify-between items-center mb-2">
+                                            <label class="text-[10px] font-black text-slate-500 uppercase">Surat Pernyataan</label>
+                                            <span id="badge-pernyataan" class="cloud-badge bg-slate-200 text-slate-500">Checking...</span>
+                                        </div>
+                                        <input type="file" class="doc-input text-[10px] w-full" data-key="pernyataan" accept=".docx" />
+                                    </div>
+                                    <div class="p-4 bg-slate-50 rounded-2xl border">
+                                        <div class="flex justify-between items-center mb-2">
+                                            <label class="text-[10px] font-black text-slate-500 uppercase">KEP Penunjukan</label>
+                                            <span id="badge-penunjukan" class="cloud-badge bg-slate-200 text-slate-500">Checking...</span>
+                                        </div>
+                                        <input type="file" class="doc-input text-[10px] w-full" data-key="penunjukan" accept=".docx" />
+                                    </div>
+                                    <div class="p-4 bg-slate-50 rounded-2xl border">
+                                        <div class="flex justify-between items-center mb-2">
+                                            <label class="text-[10px] font-black text-slate-500 uppercase">KEP Pencabutan</label>
+                                            <span id="badge-pencabutan" class="cloud-badge bg-slate-200 text-slate-500">Checking...</span>
+                                        </div>
+                                        <input type="file" class="doc-input text-[10px] w-full" data-key="pencabutan" accept=".docx" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-bc-navy p-8 rounded-3xl text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
+                            <div class="flex-1">
+                                <h4 class="font-black text-lg mb-2 text-bc-gold uppercase tracking-tighter">Status Sistem</h4>
+                                <div class="flex gap-4">
+                                    <div id="status-excel" class="text-[10px] bg-red-500/20 text-red-400 px-3 py-1 rounded-full font-black uppercase">Excel Missing</div>
+                                    <div id="status-count" class="text-[10px] bg-white/10 text-slate-400 px-3 py-1 rounded-full font-black uppercase">0 / 6 Templates</div>
+                                </div>
+                            </div>
+                            <button id="processReadyBtn" class="bg-bc-gold text-bc-navy px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest disabled:opacity-30" disabled>Aktifkan Sistem</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="page-preview" class="hidden h-full flex flex-col">
+                <div class="bg-white border-b p-4 flex items-center justify-between shrink-0 shadow-sm z-10">
+                    <select id="dataSelector" class="bg-slate-50 border rounded-xl px-4 py-2 text-sm font-bold min-w-[300px]"></select>
+                    <div class="flex gap-3">
+                        <button id="downloadPdfBtn" class="bg-red-600 text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase">PDF</button>
+                        <button id="downloadSingleBtn" class="bg-bc-navy text-white px-6 py-2.5 rounded-xl text-xs font-black uppercase">Word</button>
+                    </div>
+                </div>
+                <div id="previewContainer">
+                    <div id="docx-viewer" class="w-full flex justify-center"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // CONFIG (Inject variables from environment)
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        let workbook = null;
+        let globalExcelData = [];
+        let templates = {}; 
+        let currentType = '';
+        let isProcessed = false;
+        let user = null;
+
+        // UI Helpers
+        const loader = document.getElementById('loadingOverlay');
+        const showToast = (msg, err = false) => {
+            const t = document.getElementById("toast");
+            document.getElementById("toastMessage").innerText = msg;
+            t.style.backgroundColor = err ? "#ef4444" : "#10b981";
+            t.className = "show";
+            setTimeout(() => t.className = "", 3000);
+        };
+
+        window.toggleSidebar = () => document.getElementById('sidebar').classList.toggle('collapsed');
+        window.toggleSubmenu = (id) => {
+            document.getElementById(id).classList.toggle('expanded');
+            document.getElementById('chevron-' + id).classList.toggle('rotate');
+        };
+        window.toggleTemplateCollapse = (id) => {
+            document.getElementById(id).classList.toggle('expanded');
+            document.getElementById('chevron-' + id).classList.toggle('rotate');
+        };
+
+        // NAVIGATION
+        window.switchPage = (page, parent) => {
+            if(!isProcessed && page !== 'upload') { showToast("Sistem belum diaktifkan!", true); return; }
+            document.querySelectorAll('section').forEach(s => s.classList.add('hidden'));
+            document.getElementById('page-' + (page.includes('preview') ? 'preview' : page)).classList.remove('hidden');
+            if(page.includes('preview')) {
+                const map = { 'preview-permohonan': 'permohonan', 'preview-pernyataan': 'pernyataan', 'preview-penunjukan': 'penunjukan', 'preview-pencabutan': 'pencabutan', 'preview-bast': 'bast', 'preview-tidak-kuasa': 'tidak-kuasa' };
+                currentType = map[page];
+                document.getElementById('headerTitle').innerText = "Pratinjau: " + currentType.toUpperCase();
+                loadSheetData(page.includes('permo') || page.includes('pernya') || page.includes('penun') || page.includes('pencab') ? 0 : 1);
+                updateDataSelector();
+                renderDoc();
+            } else {
+                document.getElementById('headerTitle').innerText = "Dashboard Utama";
+            }
+        };
+
+        // EXCEL
+        document.getElementById('excelInput').addEventListener('change', e => {
+            const reader = new FileReader();
+            reader.onload = evt => {
+                workbook = XLSX.read(evt.target.result, { type: 'binary' });
+                document.getElementById('excelStatus').innerText = "Excel Terhubung";
+                const st = document.getElementById('status-excel');
+                st.innerText = "Excel Connected";
+                st.className = "text-[10px] bg-green-500/20 text-green-400 px-3 py-1 rounded-full font-black uppercase";
+                checkReady();
+            };
+            reader.readAsBinaryString(e.target.files[0]);
+        });
+
+        function loadSheetData(idx) {
+            const sheet = workbook.Sheets[workbook.SheetNames[idx]];
+            globalExcelData = XLSX.utils.sheet_to_json(sheet, { range: 1 }).filter(r => Object.values(r).some(v => String(v).toLowerCase().includes('proses')));
+            document.getElementById('dataBadge').classList.remove('hidden');
+            document.getElementById('badgeCount').innerText = globalExcelData.length;
+        }
+
+        function updateDataSelector() {
+            const s = document.getElementById('dataSelector');
+            s.innerHTML = globalExcelData.map((r, i) => `<option value="${i}">${Object.values(r)[0] || 'Data '+i}</option>`).join('');
+        }
+
+        // AUTH & FIREBASE (THE FIX)
+        const initAuth = async () => {
+            try {
+                const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                if(token) await signInWithCustomToken(auth, token);
+                else await signInAnonymously(auth);
+            } catch (err) {
+                console.error("Auth Error:", err);
+                document.getElementById('authStatus').innerHTML = `<span class="h-1.5 w-1.5 rounded-full bg-red-500"></span> Auth Error`;
+            }
+        };
+
+        onAuthStateChanged(auth, async (u) => {
+            user = u;
+            if(user) {
+                document.getElementById('authStatus').innerHTML = `<span class="h-1.5 w-1.5 rounded-full bg-green-500"></span> Cloud Ready`;
+                await loadFromCloud();
+            }
+        });
+
+        async function loadFromCloud() {
+            if(!user) return;
+            const keys = ['permohonan', 'pernyataan', 'penunjukan', 'pencabutan', 'bast', 'tidak-kuasa'];
+            for(let k of keys) {
+                try {
+                    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'templates', k));
+                    if(snap.exists()) {
+                        const blob = await (await fetch(snap.data().data)).blob();
+                        templates[k] = blob;
+                        updateBadge(k, "Cloud Active", "bg-blue-500/20 text-blue-400");
+                    } else { updateBadge(k, "Empty", "bg-slate-200 text-slate-500"); }
+                } catch(e) { console.error("Cloud fetch error:", e); }
+            }
+            checkReady();
+        }
+
+        window.saveTemplatesToCloud = async () => {
+            if(!user) { showToast("Belum terautentikasi", true); return; }
+            const newFiles = Object.keys(templates).filter(k => templates[k] instanceof File);
+            if(!newFiles.length) { showToast("Tidak ada file baru untuk di-sync"); return; }
+            
+            loader.style.display = "flex";
+            try {
+                for(let k of newFiles) {
+                    const reader = new FileReader();
+                    const base64 = await new Promise(res => {
+                        reader.onload = () => res(reader.result);
+                        reader.readAsDataURL(templates[k]);
+                    });
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'templates', k), {
+                        data: base64, name: templates[k].name, updatedAt: new Date().toISOString()
+                    });
+                    updateBadge(k, "Cloud Synced", "bg-green-500/20 text-green-400");
+                }
+                showToast("Sinkronisasi Berhasil!");
+            } catch(e) { showToast("Gagal Sync: Cek Firebase Rules!", true); }
+            finally { loader.style.display = "none"; }
+        };
+
+        function updateBadge(k, txt, cls) {
+            const b = document.getElementById(`badge-${k}`);
+            if(b) { b.innerText = txt; b.className = `cloud-badge ${cls}`; }
+        }
+
+        function checkReady() {
+            const count = Object.keys(templates).length;
+            document.getElementById('status-count').innerText = `${count} / 6 Templates`;
+            document.getElementById('processReadyBtn').disabled = !(workbook && count > 0);
+        }
+
+        document.querySelectorAll('.doc-input').forEach(i => {
+            i.addEventListener('change', e => {
+                if(e.target.files[0]) {
+                    templates[i.dataset.key] = e.target.files[0];
+                    updateBadge(i.dataset.key, "Local Ready", "bg-bc-gold/20 text-bc-gold");
+                    checkReady();
+                }
+            });
+        });
+
+        document.getElementById('processReadyBtn').addEventListener('click', e => {
+            isProcessed = true;
+            e.target.innerText = "Sistem Aktif";
+            e.target.className = "bg-green-600 text-white px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest";
+            showToast("Aplikasi Siap Digunakan");
+        });
+
+        // RENDER & DOWNLOAD
+        async function renderDoc() {
+            const idx = document.getElementById('dataSelector').value;
+            if(!templates[currentType] || idx === "") return;
+            loader.style.display = "flex";
+            try {
+                const blob = await generate(templates[currentType], globalExcelData[idx]);
+                await window.docx.renderAsync(await blob.arrayBuffer(), document.getElementById('docx-viewer'), null, { className: "docx" });
+            } catch(e) { showToast("Render Error", true); }
+            finally { loader.style.display = "none"; }
+        }
+
+        async function generate(tpl, data) {
+            const buf = await tpl.arrayBuffer();
+            const zip = new PizZip(buf);
+            const d = new window.docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+            d.render(data);
+            return d.getZip().generate({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+        }
+
+        document.getElementById('dataSelector').addEventListener('change', renderDoc);
+
+        document.getElementById('downloadSingleBtn').addEventListener('click', async () => {
+            const idx = document.getElementById('dataSelector').value;
+            const blob = await generate(templates[currentType], globalExcelData[idx]);
+            saveAs(blob, `${currentType}_${idx}.docx`);
+        });
+
+        document.getElementById('downloadPdfBtn').addEventListener('click', () => {
+            const el = document.querySelector('.docx');
+            html2pdf().from(el).save('dokumen.pdf');
+        });
+
+        initAuth();
+    </script>
+</body>
+</html>
